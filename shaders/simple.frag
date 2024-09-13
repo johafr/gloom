@@ -1,8 +1,9 @@
 #version 430 core
 
-out vec4 color;
+layout(location = 1) out vec4 output_col;
+layout(location = 1) in vec4 input_col;
 
 void main()
 {
-    color = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    output_col = input_col;
 }
