@@ -1,17 +1,16 @@
-// Uncomment these following global attributes to silence most warnings of "low" interest:
-
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 #![allow(unreachable_code)]
 #![allow(unused_mut)]
 #![allow(unused_unsafe)]
 #![allow(unused_variables)]
-
+#![allow(unused_assignments)]
 
 extern crate nalgebra_glm as glm;
 use std::{ mem, ptr, os::raw::c_void };
 use std::thread;
 use std::sync::{Mutex, Arc, RwLock};
+use std::time::Instant;
 
 mod shader;
 mod util;
@@ -52,7 +51,7 @@ fn offset<T>(n: u32) -> *const c_void {
 }
 
 
-unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>) -> u32 { // CURRENT
+unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>) -> u32 {
     // constants
     let mut vao: GLuint = 0;
     let mut vbo: GLuint = 0;
@@ -67,12 +66,8 @@ unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>
 
     // Iterating over all vertices and colours and adding each vertex-colour object to vertcols on the form [X, Y, Z, R, G, B, A]
     for i in 0..chunked_vertices.len() {
-        let v = &chunked_vertices[i];
-        let c = &chunked_colours[i];
-        let mut vertcol: Vec<f32> = Vec::new();
-        vertcol.extend(v);
-        vertcol.extend(c);
-        vertcols.extend(vertcol);
+        vertcols.extend(&chunked_vertices[i]);
+        vertcols.extend(&chunked_colours[i]);
     }
 
     // * Generate a VAO and bind it
@@ -86,8 +81,8 @@ unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>
     // * Fill it with data
     gl::BufferData(
         gl::ARRAY_BUFFER,
-        byte_size_of_array(&vertices), 
-        pointer_to_array(&vertices),
+        byte_size_of_array(&vertcols), 
+        pointer_to_array(&vertcols),
         gl::STATIC_DRAW
     );
 
@@ -180,6 +175,11 @@ fn main() {
         };
 
         let mut window_aspect_ratio = INITIAL_SCREEN_W as f32 / INITIAL_SCREEN_H as f32;
+       
+        // Camera variables a)
+        let mut camera_position = glm::vec3(0.0, 0.0, 0.0);
+        let mut pitch: f32 = 0.0;
+        let mut yaw: f32 = 0.0;
 
         // Set up openGL
         unsafe {
@@ -206,21 +206,39 @@ fn main() {
         // == // Set up your VAO around here
         // X, Y, Z
         let vertices: Vec<f32> = vec![
-            0.6, -0.8, -1.0,
-            0.0, 0.4, 0.0,
-            -0.8, -0.2, 1.0,
-        ];
+            -0.5, 0.2, -1.0,
+            -0.5, 0.0, -1.0,
+            0.2, 0.0, -1.0,
+
+            0.5, 0.2, -1.0,
+            -0.2, 0.0, -1.0,
+            0.5, 0.0, -1.0,
+
+            -0.3, 0.3, -1.0,
+            0.0, -0.3, -1.0,
+            0.3, 0.3, -1.0,
+            ];
 
         // R, G, B, A
         let colours: Vec<f32> = vec![
-            0.7, 0.8, 0.7, 1.0,
-            0.1, 0.1, 0.2, 0.9,
-            0.9, 0.1, 0.2, 0.3,
-        ];
+            0.3, 0.99, 0.2, 0.5,            
+            0.3, 0.99, 0.2, 0.5,  
+            0.3, 0.99, 0.2, 0.5,  
 
-        // Clockwise orientation
+            0.7, 0.8, 0.7, 0.7,
+            0.7, 0.8, 0.7, 0.7,
+            0.7, 0.8, 0.7, 0.7,
+
+            1.0, 0.2, 0.0, 0.3,            
+            1.0, 0.2, 0.0, 0.3,
+            1.0, 0.2, 0.0, 0.3,
+            ];
+
+        // Counterclockwise orientation
         let indices: Vec<u32> = vec![
-            0, 1, 2
+            3, 4, 5,
+            6, 7, 8,
+            0, 1, 2, 
         ];
 
         let vao = unsafe {
@@ -242,19 +260,13 @@ fn main() {
                 .attach_file("./shaders/simple.frag")
                 .link()
         };
-        
-
-
-        // Used to demonstrate keyboard handling for exercise 2.
-        let mut _arbitrary_number = 0.0; // feel free to remove
-
 
         // The main rendering loop
         let first_frame_time = std::time::Instant::now();
         let mut previous_frame_time = first_frame_time;
         loop {
             // Compute time passed since the previous frame and since the start of the program
-            let now = std::time::Instant::now();
+            let now = Instant::now();
             let elapsed = now.duration_since(first_frame_time).as_secs_f32();
             let delta_time = now.duration_since(previous_frame_time).as_secs_f32();
             previous_frame_time = now;
@@ -276,20 +288,44 @@ fn main() {
                     match key {
                         // The `VirtualKeyCode` enum is defined here:
                         //    https://docs.rs/winit/0.25.0/winit/event/enum.VirtualKeyCode.html
-
-                        VirtualKeyCode::A => {
-                            _arbitrary_number += delta_time;
+                        
+                        VirtualKeyCode::W => {
+                            camera_position.z += delta_time;
+                        }
+                        VirtualKeyCode::S => {
+                            camera_position.z -= delta_time;
                         }
                         VirtualKeyCode::D => {
-                            _arbitrary_number -= delta_time;
+                            camera_position.x += delta_time;
                         }
-
-
+                        VirtualKeyCode::A => {
+                            camera_position.x -= delta_time;
+                        }
+                        VirtualKeyCode::Space => {
+                            camera_position.y += delta_time;
+                        }
+                        VirtualKeyCode::LShift => {
+                            camera_position.y -= delta_time;
+                        }
+                        VirtualKeyCode::Up => {
+                            pitch += delta_time;
+                        }
+                        VirtualKeyCode::Down => {
+                            pitch -= delta_time;
+                        }
+                        VirtualKeyCode::Right => {
+                            yaw += delta_time;
+                        }
+                        VirtualKeyCode::Left => {
+                            yaw -= delta_time;
+                        }
                         // default handler:
                         _ => { }
                     }
+                    
                 }
             }
+
             // Handle mouse movement. delta contains the x and y movement of the mouse since last frame in pixels
             if let Ok(mut delta) = mouse_delta.lock() {
 
@@ -300,6 +336,23 @@ fn main() {
             }
 
             // == // Please compute camera transforms here (exercise 2 & 3)
+            let translation_matrix = glm::translate(&glm::identity(), &glm::vec3(0.0, 0.0, -3.0));
+        
+            let fovy = 45.0_f32.to_radians();
+            let perspective_matrix = glm::perspective(window_aspect_ratio, fovy, 0.1, 100.0);
+
+            let mut view_matrix: glm::Mat4 = glm::identity();
+            let yaw_rotation = glm::rotation(yaw, &glm::vec3(0.0, 1.0, 0.0));
+            let pitch_rotation = glm::rotation(pitch, &glm::vec3(1.0, 0.0, 0.0));
+            view_matrix.set_column(3, &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
+            view_matrix = view_matrix * yaw_rotation * pitch_rotation;
+
+            let transformation_matrix = perspective_matrix * translation_matrix * view_matrix;
+
+            let transformation_loc = unsafe {
+                let uniform_name = std::ffi::CString::new("transformation_matrix").unwrap();
+                gl::GetUniformLocation(simple_shader.program_id, "transformation_matrix".as_ptr() as *const i8)
+            };
 
 
             unsafe {
@@ -309,10 +362,11 @@ fn main() {
                 gl::ClearColor(0.035, 0.046, 0.078, 1.0); // night sky
                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
+                gl::UniformMatrix4fv(transformation_loc, 1, gl::FALSE, glm::value_ptr(&transformation_matrix).as_ptr());
 
                 // == // Issue the necessary gl:: commands to draw your scene here
                 gl::BindVertexArray(vao);
-                gl::DrawElements(gl::TRIANGLES, 3, gl::UNSIGNED_INT, offset::<f32>(0));
+                gl::DrawElements(gl::TRIANGLES, 9, gl::UNSIGNED_INT, offset::<f32>(0));
             }
 
             // Display the new color buffer on the display
