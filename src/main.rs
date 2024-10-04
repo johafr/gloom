@@ -14,10 +14,14 @@ use std::time::Instant;
 
 mod shader;
 mod util;
+mod mesh;
+mod scene_graph;
+mod toolbox;
 
 use gl::types::GLuint;
 use glutin::event::{Event, WindowEvent, DeviceEvent, KeyboardInput, ElementState::{Pressed, Released}, VirtualKeyCode::{self, *}};
 use glutin::event_loop::ControlFlow;
+use mesh::Helicopter;
 
 
 // initial window size
@@ -51,23 +55,25 @@ fn offset<T>(n: u32) -> *const c_void {
 }
 
 
-unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>) -> u32 {
+unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>, normals: &Vec<f32>) -> u32 {
     // constants
     let mut vao: GLuint = 0;
     let mut vbo: GLuint = 0;
     let mut ibo: GLuint = 0;
 
     // Concat vertices and colours
-    let mut vertcols: Vec<f32> = Vec::new();
+    let mut vectors: Vec<f32> = Vec::new();
 
     // Converting vertices and colours into their own vectors
     let chunked_vertices: Vec<Vec<f32>> = vertices.chunks(3).map(|chunk| chunk.to_vec()).collect();
     let chunked_colours: Vec<Vec<f32>> = colours.chunks(4).map(|chunk| chunk.to_vec()).collect();
+    let chunked_normals: Vec<Vec<f32>> = normals.chunks(3).map(|chunk| chunk.to_vec()).collect();
 
-    // Iterating over all vertices and colours and adding each vertex-colour object to vertcols on the form [X, Y, Z, R, G, B, A]
+    // Iterating over all vertices and colours and adding each vertex-colour object and normal-vector object to vectors on the form [X, Y, Z, R, G, B, A, X, Y, Z]
     for i in 0..chunked_vertices.len() {
-        vertcols.extend(&chunked_vertices[i]);
-        vertcols.extend(&chunked_colours[i]);
+        vectors.extend(&chunked_vertices[i]);
+        vectors.extend(&chunked_colours[i]);
+        vectors.extend(&chunked_normals[i]);
     }
 
     // * Generate a VAO and bind it
@@ -81,8 +87,8 @@ unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>
     // * Fill it with data
     gl::BufferData(
         gl::ARRAY_BUFFER,
-        byte_size_of_array(&vertcols), 
-        pointer_to_array(&vertcols),
+        byte_size_of_array(&vectors), 
+        pointer_to_array(&vectors),
         gl::STATIC_DRAW
     );
 
@@ -93,7 +99,7 @@ unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>
         3,
         gl::FLOAT,
         gl::FALSE,
-        7 * size_of::<f32>(),
+        10 * size_of::<f32>(),
         offset::<f32>(0)
     );
     gl::EnableVertexAttribArray(0);
@@ -104,10 +110,21 @@ unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>
         4,
         gl::FLOAT,
         gl::FALSE,
-        7 * size_of::<f32>(),
+        10 * size_of::<f32>(),
         offset::<f32>(3)
     );
     gl::EnableVertexAttribArray(1);
+
+    // Normals
+    gl::VertexAttribPointer(
+        2,
+        3,
+        gl::FLOAT,
+        gl::FALSE,
+        10 * size_of::<f32>(),
+        offset::<f32>(7)
+    );
+    gl::EnableVertexAttribArray(2);
 
 
     // * Generate a IBO and bind it
@@ -128,11 +145,6 @@ unsafe fn create_vao(vertices: &Vec<f32>, indices: &Vec<u32>, colours: &Vec<f32>
     // * Return the ID of the VAO
     vao
 }
-
-unsafe fn print_dumb_things() {
-    println!("Printing dumb things: ");
-}
-
 
 fn main() {
     // Set up the necessary objects to deal with windows and event handling
@@ -193,56 +205,20 @@ fn main() {
             gl::DebugMessageCallback(Some(util::debug_callback), ptr::null());
 
             // Print some diagnostics
-            println!("{}: {}", util::get_gl_string(gl::VENDOR), util::get_gl_string(gl::RENDERER));
-            println!("OpenGL\t: {}", util::get_gl_string(gl::VERSION));
-            println!("GLSL\t: {}", util::get_gl_string(gl::SHADING_LANGUAGE_VERSION));
-        }
-
-        // Print things
-        unsafe {
-            print_dumb_things();
+            //println!("{}: {}", util::get_gl_string(gl::VENDOR), util::get_gl_string(gl::RENDERER));
+            //println!("OpenGL\t: {}", util::get_gl_string(gl::VERSION));
+            //println!("GLSL\t: {}", util::get_gl_string(gl::SHADING_LANGUAGE_VERSION));
         }
 
         // == // Set up your VAO around here
-        // X, Y, Z
-        let vertices: Vec<f32> = vec![
-            -0.5, 0.2, -1.0,
-            -0.5, 0.0, -1.0,
-            0.2, 0.0, -1.0,
+        let terrain_path: &str = "./resources/lunarsurface.obj";
+        let lunarsurface: mesh::Mesh = mesh::Terrain::load(&terrain_path);
 
-            0.5, 0.2, -1.0,
-            -0.2, 0.0, -1.0,
-            0.5, 0.0, -1.0,
-
-            -0.3, 0.3, -1.0,
-            0.0, -0.3, -1.0,
-            0.3, 0.3, -1.0,
-            ];
-
-        // R, G, B, A
-        let colours: Vec<f32> = vec![
-            0.3, 0.99, 0.2, 0.5,            
-            0.3, 0.99, 0.2, 0.5,  
-            0.3, 0.99, 0.2, 0.5,  
-
-            0.7, 0.8, 0.7, 0.7,
-            0.7, 0.8, 0.7, 0.7,
-            0.7, 0.8, 0.7, 0.7,
-
-            1.0, 0.2, 0.0, 0.3,            
-            1.0, 0.2, 0.0, 0.3,
-            1.0, 0.2, 0.0, 0.3,
-            ];
-
-        // Counterclockwise orientation
-        let indices: Vec<u32> = vec![
-            3, 4, 5,
-            6, 7, 8,
-            0, 1, 2, 
-        ];
+        let vehicle_path: &str = "./resources/helicopter.obj";
+        let helicopter: Helicopter = mesh::Helicopter::load(&vehicle_path);
 
         let vao = unsafe {
-            create_vao(&vertices, &indices, &colours)
+            create_vao(&lunarsurface.vertices, &lunarsurface.indices, &lunarsurface.colors, &lunarsurface.normals)
         };
         // == // Set up your shaders here
 
@@ -336,10 +312,8 @@ fn main() {
             }
 
             // == // Please compute camera transforms here (exercise 2 & 3)
-            let translation_matrix = glm::translate(&glm::identity(), &glm::vec3(0.0, 0.0, -3.0));
-        
             let fovy = 45.0_f32.to_radians();
-            let perspective_matrix = glm::perspective(window_aspect_ratio, fovy, 0.1, 100.0);
+            let perspective_matrix = glm::perspective(window_aspect_ratio, fovy, 0.1, 1000.0);
 
             let mut view_matrix: glm::Mat4 = glm::identity();
             let yaw_rotation = glm::rotation(yaw, &glm::vec3(0.0, 1.0, 0.0));
@@ -347,7 +321,7 @@ fn main() {
             view_matrix.set_column(3, &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             view_matrix = view_matrix * yaw_rotation * pitch_rotation;
 
-            let transformation_matrix = perspective_matrix * translation_matrix * view_matrix;
+            let transformation_matrix = perspective_matrix * view_matrix;
 
             let transformation_loc = unsafe {
                 let uniform_name = std::ffi::CString::new("transformation_matrix").unwrap();
@@ -366,7 +340,7 @@ fn main() {
 
                 // == // Issue the necessary gl:: commands to draw your scene here
                 gl::BindVertexArray(vao);
-                gl::DrawElements(gl::TRIANGLES, 9, gl::UNSIGNED_INT, offset::<f32>(0));
+                gl::DrawElements(gl::TRIANGLES, lunarsurface.index_count, gl::UNSIGNED_INT, offset::<f32>(0));
             }
 
             // Display the new color buffer on the display
@@ -405,7 +379,7 @@ fn main() {
 
         match event {
             Event::WindowEvent { event: WindowEvent::Resized(physical_size), .. } => {
-                println!("New window size received: {}x{}", physical_size.width, physical_size.height);
+                //println!("New window size received: {}x{}", physical_size.width, physical_size.height);
                 if let Ok(mut new_size) = arc_window_size.lock() {
                     *new_size = (physical_size.width, physical_size.height, true);
                 }
