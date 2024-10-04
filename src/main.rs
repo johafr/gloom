@@ -7,6 +7,8 @@
 #![allow(unused_assignments)]
 
 extern crate nalgebra_glm as glm;
+use std::mem::ManuallyDrop;
+use std::pin::Pin;
 use std::{ mem, ptr, os::raw::c_void };
 use std::thread;
 use std::sync::{Mutex, Arc, RwLock};
@@ -17,6 +19,8 @@ mod util;
 mod mesh;
 mod scene_graph;
 mod toolbox;
+
+use scene_graph::SceneNode;
 
 use gl::types::GLuint;
 use glutin::event::{Event, WindowEvent, DeviceEvent, KeyboardInput, ElementState::{Pressed, Released}, VirtualKeyCode::{self, *}};
@@ -192,6 +196,7 @@ fn main() {
         let mut camera_position = glm::vec3(0.0, 0.0, 0.0);
         let mut pitch: f32 = 0.0;
         let mut yaw: f32 = 0.0;
+        let camera_speed: f32 = 30.0;
 
         // Set up openGL
         unsafe {
@@ -217,9 +222,32 @@ fn main() {
         let vehicle_path: &str = "./resources/helicopter.obj";
         let helicopter: Helicopter = mesh::Helicopter::load(&vehicle_path);
 
-        let vao = unsafe {
-            create_vao(&lunarsurface.vertices, &lunarsurface.indices, &lunarsurface.colors, &lunarsurface.normals)
-        };
+        let mut terrain_vao = unsafe {create_vao(&lunarsurface.vertices, &lunarsurface.indices, &lunarsurface.colors, &lunarsurface.normals)};
+        let mut body_vao = unsafe {create_vao(&helicopter.body.vertices, &helicopter.body.indices, &helicopter.body.colors, &helicopter.body.normals)};
+        let mut door_vao = unsafe {create_vao(&helicopter.door.vertices, &helicopter.door.indices, &helicopter.door.colors, &helicopter.door.normals)};
+        let mut main_rotor_vao = unsafe {create_vao(&helicopter.main_rotor.vertices, &helicopter.main_rotor.indices, &helicopter.main_rotor.colors, &helicopter.main_rotor.normals)};
+        let mut tail_rotor_vao = unsafe {create_vao(&helicopter.tail_rotor.vertices, &helicopter.tail_rotor.indices, &helicopter.tail_rotor.colors, &helicopter.tail_rotor.normals)};
+
+        let mut parent_node = SceneNode::new();
+        let mut terrain_node = SceneNode::from_vao(terrain_vao, lunarsurface.index_count);
+        let mut helicopter_body_node = SceneNode::from_vao(body_vao, helicopter.body.index_count);
+        let mut helicopter_door_node = SceneNode::from_vao(door_vao, helicopter.door.index_count);
+        let mut helicopter_main_rotor_node = SceneNode::from_vao(main_rotor_vao, helicopter.main_rotor.index_count);
+        let mut helicopter_tail_rotor_node = SceneNode::from_vao(tail_rotor_vao, helicopter.tail_rotor.index_count);
+        
+        terrain_node.reference_point = glm::vec3(0.0, 0.0, 0.0);
+        helicopter_body_node.reference_point = glm::vec3(0.0, 0.0, 0.0);
+        helicopter_door_node.reference_point = glm::vec3(0.0, 0.0, 0.0);
+        helicopter_main_rotor_node.reference_point = glm::vec3(0.0, 0.0, 0.0);
+        helicopter_tail_rotor_node.reference_point = glm::vec3(-0.35, -2.3, -10.4);
+        
+        parent_node.add_child(&terrain_node);
+        terrain_node.add_child(&helicopter_body_node);
+        helicopter_body_node.add_child(&helicopter_door_node);
+        helicopter_body_node.add_child(&helicopter_main_rotor_node);
+        helicopter_body_node.add_child(&helicopter_tail_rotor_node);
+        
+        //helicopter_body_node.position = glm::vec3(0.0, 0.0, -20.0);
         // == // Set up your shaders here
 
         // Basic usage of shader helper:
@@ -266,34 +294,34 @@ fn main() {
                         //    https://docs.rs/winit/0.25.0/winit/event/enum.VirtualKeyCode.html
                         
                         VirtualKeyCode::W => {
-                            camera_position.z += delta_time;
+                            camera_position.z += delta_time * camera_speed;
                         }
                         VirtualKeyCode::S => {
-                            camera_position.z -= delta_time;
+                            camera_position.z -= delta_time * camera_speed;
                         }
                         VirtualKeyCode::D => {
-                            camera_position.x += delta_time;
+                            camera_position.x -= delta_time * camera_speed;
                         }
                         VirtualKeyCode::A => {
-                            camera_position.x -= delta_time;
+                            camera_position.x += delta_time * camera_speed;
                         }
                         VirtualKeyCode::Space => {
-                            camera_position.y += delta_time;
+                            camera_position.y += delta_time * camera_speed;
                         }
                         VirtualKeyCode::LShift => {
-                            camera_position.y -= delta_time;
+                            camera_position.y -= delta_time * camera_speed;
                         }
                         VirtualKeyCode::Up => {
-                            pitch += delta_time;
+                            pitch -= delta_time * 3.0;
                         }
                         VirtualKeyCode::Down => {
-                            pitch -= delta_time;
+                            pitch += delta_time * 3.0;
                         }
                         VirtualKeyCode::Right => {
-                            yaw += delta_time;
+                            yaw += delta_time * 3.0;
                         }
                         VirtualKeyCode::Left => {
-                            yaw -= delta_time;
+                            yaw -= delta_time * 3.0;
                         }
                         // default handler:
                         _ => { }
@@ -312,22 +340,26 @@ fn main() {
             }
 
             // == // Please compute camera transforms here (exercise 2 & 3)
-            let fovy = 45.0_f32.to_radians();
-            let perspective_matrix = glm::perspective(window_aspect_ratio, fovy, 0.1, 1000.0);
-
             let mut view_matrix: glm::Mat4 = glm::identity();
+
+            let fovy = 45.0_f32.to_radians();
+
+            let perspective_transform = glm::perspective(window_aspect_ratio, fovy, 0.1, 1000.0);
+            let position_transform = glm::translation(&camera_position);
+
             let yaw_rotation = glm::rotation(yaw, &glm::vec3(0.0, 1.0, 0.0));
             let pitch_rotation = glm::rotation(pitch, &glm::vec3(1.0, 0.0, 0.0));
-            view_matrix.set_column(3, &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
-            view_matrix = view_matrix * yaw_rotation * pitch_rotation;
 
-            let transformation_matrix = perspective_matrix * view_matrix;
+            view_matrix = perspective_transform * pitch_rotation * yaw_rotation * view_matrix * position_transform;
 
-            let transformation_loc = unsafe {
-                let uniform_name = std::ffi::CString::new("transformation_matrix").unwrap();
-                gl::GetUniformLocation(simple_shader.program_id, "transformation_matrix".as_ptr() as *const i8)
-            };
+            //Updating the rotors:
+            helicopter_main_rotor_node.rotation = glm::vec3(0.0, elapsed * 5.0, 0.0);
+            helicopter_tail_rotor_node.rotation = glm::vec3(elapsed * 5.0, 0.0 , 0.0);
 
+            let delta_pose = toolbox::simple_heading_animation(elapsed);
+
+            helicopter_body_node.position = glm::vec3(delta_pose.x, 0.0, delta_pose.z);
+            helicopter_body_node.rotation = glm::vec3(delta_pose.pitch, delta_pose.yaw, delta_pose.roll);
 
             unsafe {
                 simple_shader.activate();
@@ -336,11 +368,35 @@ fn main() {
                 gl::ClearColor(0.035, 0.046, 0.078, 1.0); // night sky
                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
-                gl::UniformMatrix4fv(transformation_loc, 1, gl::FALSE, glm::value_ptr(&transformation_matrix).as_ptr());
+                unsafe fn draw_scene(node: &SceneNode, view_projection_matrix: &glm::Mat4, transformation_this_far: &glm::Mat4, shader: &shader::Shader) {
+                    let mut node_transformation = glm::identity::<f32, 4>();
 
-                // == // Issue the necessary gl:: commands to draw your scene here
-                gl::BindVertexArray(vao);
-                gl::DrawElements(gl::TRIANGLES, lunarsurface.index_count, gl::UNSIGNED_INT, offset::<f32>(0));
+                    let to_ref = glm::translation(&node.reference_point);
+                    let from_ref = glm::translation(&-node.reference_point);
+
+                    let roll = glm::rotation(node.rotation.x, &glm::vec3(1.0, 0.0, 0.0));
+                    let pitch = glm::rotation(node.rotation.y, &glm::vec3(0.0, 1.0, 0.0));
+                    let yaw = glm::rotation(node.rotation.z, &glm::vec3(0.0, 0.0, 1.0));
+
+                    let position_transform = glm::translation(&node.position);
+                    let scale_transform = glm::scaling(&node.scale);
+
+                    node_transformation = position_transform * from_ref * scale_transform * pitch * roll * yaw * to_ref;
+                    
+                    if node.vao_id != 0 {
+                        shader.activate();
+                        gl::UniformMatrix4fv(shader.get_uniform_location("mvp_matrix"), 1, gl::FALSE, glm::value_ptr(&(view_projection_matrix*transformation_this_far*node_transformation)).as_ptr());
+                        gl::UniformMatrix4fv(shader.get_uniform_location("model_matrix"), 1, gl::FALSE, glm::value_ptr(&(transformation_this_far * node_transformation)).as_ptr());
+                        gl::BindVertexArray(node.vao_id);
+                        gl::DrawElements(gl::TRIANGLES, node.index_count, gl::UNSIGNED_INT, offset::<f32>(0));
+                    }
+                    
+                    for &child in &node.children {
+                        draw_scene(&*child, view_projection_matrix, &(transformation_this_far*node_transformation), shader);
+                    }
+                }   
+
+                draw_scene(&parent_node, &view_matrix, &glm::identity(), &simple_shader);
             }
 
             // Display the new color buffer on the display
